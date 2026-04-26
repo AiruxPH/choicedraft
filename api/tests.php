@@ -110,11 +110,14 @@ function listTests() {
             JOIN users u ON t.owner_id = u.id
             LEFT JOIN questions q ON t.id = q.test_id
             LEFT JOIN test_collaborators tc ON t.id = tc.test_id
-            WHERE t.owner_id = ? OR tc.user_id = ?
+            LEFT JOIN subject_enrollments se ON t.subject_id = se.subject_id
+            WHERE t.owner_id = ? 
+               OR tc.user_id = ? 
+               OR (se.user_id = ? AND t.status = 'Published')
             GROUP BY t.id
             ORDER BY t.created_at DESC
         ");
-        $stmt->execute([$userId, $userId]);
+        $stmt->execute([$userId, $userId, $userId]);
     } else {
         // Get all published tests
         $stmt = $db->prepare("
