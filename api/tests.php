@@ -101,7 +101,8 @@ function listTests() {
     $userId = $_GET['user_id'] ?? null;
     
     if ($userId) {
-        // Get tests for specific user (owned or collaborated)
+        // Get tests owned by or collaborated on by this user only.
+        // Subject-scoped tests (tests inside a class) are accessed via the subject view.
         $stmt = $db->prepare("
             SELECT DISTINCT t.*, 
                    COUNT(DISTINCT q.id) as question_count,
@@ -110,14 +111,12 @@ function listTests() {
             JOIN users u ON t.owner_id = u.id
             LEFT JOIN questions q ON t.id = q.test_id
             LEFT JOIN test_collaborators tc ON t.id = tc.test_id
-            LEFT JOIN subject_enrollments se ON t.subject_id = se.subject_id
             WHERE t.owner_id = ? 
-               OR tc.user_id = ? 
-               OR (se.user_id = ? AND t.status = 'Published')
+               OR tc.user_id = ?
             GROUP BY t.id
             ORDER BY t.created_at DESC
         ");
-        $stmt->execute([$userId, $userId, $userId]);
+        $stmt->execute([$userId, $userId]);
     } else {
         // Get all published tests
         $stmt = $db->prepare("
@@ -161,6 +160,16 @@ function createTest($data) {
     }
     
     $db = getDB();
+    
+    // SECURITY CHECK: Verify user role
+    $stmt = $db->prepare("SELECT role FROM users WHERE id = ?");
+    $stmt->execute([$ownerId]);
+    $user = $stmt->fetch();
+    
+    if (!$user || $user['role'] === 'Student') {
+        sendResponse(['error' => 'Unauthorized: Students cannot create tests'], 403);
+    }
+
     $id = generateId('test');
     
     $stmt = $db->prepare("
