@@ -1,7 +1,7 @@
 <?php
 /**
  * ChoiceDraft Subjects API
- * Handles subject CRUD and enrollment operations
+ * Handles subject CRUD, enrollment, and class management
  */
 
 require_once 'config.php';
@@ -21,6 +21,8 @@ switch ($method) {
     case 'POST':
         if (isset($input['action']) && $input['action'] === 'join') {
             joinSubject($input);
+        } elseif (isset($input['action']) && $input['action'] === 'add_by_school_id') {
+            addBySchoolId($input);
         } else {
             createSubject($input);
         }
@@ -35,7 +37,10 @@ switch ($method) {
         break;
         
     case 'DELETE':
-        if (isset($_GET['id'])) {
+        if (isset($_GET['id']) && isset($_GET['user_id'])) {
+            // Remove a specific student from enrollment
+            removeEnrollment($_GET['id'], $_GET['user_id']);
+        } elseif (isset($_GET['id'])) {
             deleteSubject($_GET['id']);
         } else {
             sendResponse(['error' => 'Subject ID required'], 400);
@@ -44,6 +49,18 @@ switch ($method) {
         
     default:
         sendResponse(['error' => 'Method not allowed'], 405);
+}
+
+function getEnrichedMembers($db, $subjectId) {
+    $stmt = $db->prepare("
+        SELECT u.id, u.name, u.email, u.school_id, se.enrolled_at
+        FROM subject_enrollments se
+        JOIN users u ON se.user_id = u.id
+        WHERE se.subject_id = ?
+        ORDER BY se.enrolled_at ASC
+    ");
+    $stmt->execute([$subjectId]);
+    return $stmt->fetchAll();
 }
 
 function getSubject($id) {
@@ -57,11 +74,10 @@ function getSubject($id) {
         sendResponse(['error' => 'Subject not found'], 404);
     }
     
-    // Get enrolled students
-    $stmt = $db->prepare("SELECT user_id FROM subject_enrollments WHERE subject_id = ?");
-    $stmt->execute([$id]);
-    $enrollments = $stmt->fetchAll(PDO::FETCH_COLUMN);
-    $subject['enrolledStudents'] = $enrollments ?: [];
+    $subject['members'] = getEnrichedMembers($db, $id);
+    $subject['enrolled_count'] = count($subject['members']);
+    // Keep legacy field for compatibility
+    $subject['enrolledStudents'] = array_column($subject['members'], 'id');
     
     sendResponse(['subject' => $subject]);
 }
@@ -76,11 +92,9 @@ function listSubjects() {
     }
     
     if ($role === 'Teacher' || $role === 'Admin') {
-        // Teacher sees classes they own
         $stmt = $db->prepare("SELECT * FROM subjects WHERE teacher_id = ? ORDER BY created_at DESC");
         $stmt->execute([$userId]);
     } else {
-        // Student sees classes they are enrolled in
         $stmt = $db->prepare("
             SELECT s.* FROM subjects s
             JOIN subject_enrollments se ON s.id = se.subject_id
@@ -92,12 +106,10 @@ function listSubjects() {
     
     $subjects = $stmt->fetchAll();
     
-    // Add enrolled students count/list for each
     foreach ($subjects as &$subject) {
-        $stmt = $db->prepare("SELECT user_id FROM subject_enrollments WHERE subject_id = ?");
-        $stmt->execute([$subject['id']]);
-        $enrollments = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        $subject['enrolledStudents'] = $enrollments ?: [];
+        $subject['members'] = getEnrichedMembers($db, $subject['id']);
+        $subject['enrolled_count'] = count($subject['members']);
+        $subject['enrolledStudents'] = array_column($subject['members'], 'id');
     }
     
     sendResponse(['subjects' => $subjects]);
@@ -106,6 +118,7 @@ function listSubjects() {
 function createSubject($data) {
     $teacherId = $data['teacher_id'] ?? '';
     $name = $data['name'] ?? '';
+    $description = $data['description'] ?? null;
     $joinCode = $data['join_code'] ?? null;
     
     if (empty($teacherId) || empty($name)) {
@@ -115,17 +128,20 @@ function createSubject($data) {
     $db = getDB();
     $id = generateId('subj');
     
-    $stmt = $db->prepare("INSERT INTO subjects (id, name, teacher_id, join_code) VALUES (?, ?, ?, ?)");
+    $stmt = $db->prepare("INSERT INTO subjects (id, name, description, teacher_id, join_code) VALUES (?, ?, ?, ?, ?)");
     
     try {
-        $stmt->execute([$id, $name, $teacherId, $joinCode]);
+        $stmt->execute([$id, $name, $description, $teacherId, $joinCode]);
         sendResponse([
             'success' => true,
             'subject' => [
                 'id' => $id,
                 'name' => $name,
+                'description' => $description,
                 'teacher_id' => $teacherId,
                 'join_code' => $joinCode,
+                'members' => [],
+                'enrolled_count' => 0,
                 'enrolledStudents' => [],
                 'created_at' => date('Y-m-d H:i:s')
             ]
@@ -145,7 +161,6 @@ function joinSubject($data) {
     
     $db = getDB();
     
-    // Find subject by join code
     $stmt = $db->prepare("SELECT * FROM subjects WHERE join_code = ?");
     $stmt->execute([$joinCode]);
     $subject = $stmt->fetch();
@@ -154,30 +169,68 @@ function joinSubject($data) {
         sendResponse(['success' => false, 'error' => 'Invalid Join Code'], 404);
     }
     
-    // Check if already enrolled
     $stmt = $db->prepare("SELECT * FROM subject_enrollments WHERE subject_id = ? AND user_id = ?");
     $stmt->execute([$subject['id'], $userId]);
     if ($stmt->fetch()) {
         sendResponse(['success' => false, 'error' => 'Already enrolled in this subject'], 400);
     }
     
-    // Enroll
     $stmt = $db->prepare("INSERT INTO subject_enrollments (subject_id, user_id) VALUES (?, ?)");
     try {
         $stmt->execute([$subject['id'], $userId]);
-        
-        // Refresh subject to include new enrollment
-        $stmt = $db->prepare("SELECT user_id FROM subject_enrollments WHERE subject_id = ?");
-        $stmt->execute([$subject['id']]);
-        $enrollments = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        $subject['enrolledStudents'] = $enrollments ?: [];
-        
-        sendResponse([
-            'success' => true,
-            'subject' => $subject
-        ]);
+        $subject['members'] = getEnrichedMembers($db, $subject['id']);
+        $subject['enrolled_count'] = count($subject['members']);
+        $subject['enrolledStudents'] = array_column($subject['members'], 'id');
+        sendResponse(['success' => true, 'subject' => $subject]);
     } catch (PDOException $e) {
         sendResponse(['success' => false, 'error' => 'Failed to join subject: ' . $e->getMessage()], 500);
+    }
+}
+
+function addBySchoolId($data) {
+    $subjectId = $data['subject_id'] ?? '';
+    $schoolId = $data['school_id'] ?? '';
+    
+    if (empty($subjectId) || empty($schoolId)) {
+        sendResponse(['error' => 'Subject ID and School ID are required'], 400);
+    }
+    
+    $db = getDB();
+    
+    // Look up student by school_id
+    $stmt = $db->prepare("SELECT id, name, email FROM users WHERE school_id = ? AND role = 'Student'");
+    $stmt->execute([$schoolId]);
+    $student = $stmt->fetch();
+    
+    if (!$student) {
+        sendResponse(['success' => false, 'error' => 'No student found with School ID: ' . $schoolId], 404);
+    }
+    
+    // Check already enrolled
+    $stmt = $db->prepare("SELECT * FROM subject_enrollments WHERE subject_id = ? AND user_id = ?");
+    $stmt->execute([$subjectId, $student['id']]);
+    if ($stmt->fetch()) {
+        sendResponse(['success' => false, 'error' => $student['name'] . ' is already enrolled in this class'], 400);
+    }
+    
+    $stmt = $db->prepare("INSERT INTO subject_enrollments (subject_id, user_id) VALUES (?, ?)");
+    try {
+        $stmt->execute([$subjectId, $student['id']]);
+        sendResponse(['success' => true, 'student' => $student]);
+    } catch (PDOException $e) {
+        sendResponse(['success' => false, 'error' => 'Failed to add student: ' . $e->getMessage()], 500);
+    }
+}
+
+function removeEnrollment($subjectId, $userId) {
+    $db = getDB();
+    
+    $stmt = $db->prepare("DELETE FROM subject_enrollments WHERE subject_id = ? AND user_id = ?");
+    try {
+        $stmt->execute([$subjectId, $userId]);
+        sendResponse(['success' => true]);
+    } catch (PDOException $e) {
+        sendResponse(['error' => 'Failed to remove student: ' . $e->getMessage()], 500);
     }
 }
 
@@ -193,10 +246,10 @@ function updateSubject($id, $data) {
     $fields = [];
     $values = [];
     
-    $allowedFields = ['name', 'join_code'];
+    $allowedFields = ['name', 'description', 'join_code'];
     
     foreach ($allowedFields as $field) {
-        if (isset($data[$field])) {
+        if (array_key_exists($field, $data)) {
             $fields[] = "$field = ?";
             $values[] = $data[$field];
         }
@@ -221,12 +274,23 @@ function updateSubject($id, $data) {
 function deleteSubject($id) {
     $db = getDB();
     
+    // Guard 1: No enrolled students
+    $stmt = $db->prepare("SELECT COUNT(*) FROM subject_enrollments WHERE subject_id = ?");
+    $stmt->execute([$id]);
+    if ($stmt->fetchColumn() > 0) {
+        sendResponse(['error' => 'Cannot delete: class still has enrolled students. Remove all students first.'], 409);
+    }
+    
+    // Guard 2: No active (Published) tests
+    $stmt = $db->prepare("SELECT COUNT(*) FROM tests WHERE subject_id = ? AND status = 'Published'");
+    $stmt->execute([$id]);
+    if ($stmt->fetchColumn() > 0) {
+        sendResponse(['error' => 'Cannot delete: class has ongoing (Published) tests. Finish or archive them first.'], 409);
+    }
+    
     try {
-        // Constraints ON DELETE CASCADE should handle enrollments and tests
-        // Alternatively, SET NULL for tests. We use ON DELETE SET NULL for tests in the schema.
         $stmt = $db->prepare("DELETE FROM subjects WHERE id = ?");
         $stmt->execute([$id]);
-        
         sendResponse(['success' => true]);
     } catch (PDOException $e) {
         sendResponse(['error' => 'Failed to delete subject: ' . $e->getMessage()], 500);
