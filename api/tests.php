@@ -69,14 +69,22 @@ function getTest($id) {
     $stmt->execute([$id]);
     $questions = $stmt->fetchAll();
     
-    // Get choices for each question
+    // Get all choices for all questions in ONE query (fixes N+1)
+    $stmt = $db->prepare("
+        SELECT id, question_id, text, is_correct FROM choices 
+        WHERE test_id = ?
+        ORDER BY question_id, id
+    ");
+    $stmt->execute([$id]);
+    $allChoices = $stmt->fetchAll();
+
+    // Map choices to their questions
+    $choicesByQuestion = [];
+    foreach ($allChoices as $choice) {
+        $choicesByQuestion[$choice['question_id']][] = $choice;
+    }
     foreach ($questions as &$q) {
-        $stmt = $db->prepare("
-            SELECT id, text, is_correct FROM choices 
-            WHERE test_id = ? AND question_id = ?
-        ");
-        $stmt->execute([$id, $q['id']]);
-        $q['choices'] = $stmt->fetchAll();
+        $q['choices'] = $choicesByQuestion[$q['id']] ?? [];
     }
     
     $test['questions'] = $questions;
