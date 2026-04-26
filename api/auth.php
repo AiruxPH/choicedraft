@@ -41,7 +41,7 @@ function handleLogin($data) {
     }
     
     $db = getDB();
-    $stmt = $db->prepare("SELECT id, name, email, password, role, institution FROM users WHERE email = ?");
+    $stmt = $db->prepare("SELECT id, name, email, password, role, institution, school_id FROM users WHERE email = ?");
     $stmt->execute([$email]);
     $user = $stmt->fetch();
     
@@ -61,6 +61,7 @@ function handleRegister($data) {
     $password = $data['password'] ?? '';
     $role = $data['role'] ?? 'Student';
     $institution = $data['institution'] ?? '';
+    $schoolId = ($role === 'Student') ? ($data['school_id'] ?? null) : null;
     
     if (empty($name) || empty($email) || empty($password)) {
         sendResponse(['success' => false, 'error' => 'Name, email, and password required'], 400);
@@ -77,17 +78,18 @@ function handleRegister($data) {
     
     // Create new user
     $id = generateId('user');
-    $stmt = $db->prepare("INSERT INTO users (id, name, email, password, role, institution) VALUES (?, ?, ?, ?, ?, ?)");
+    $stmt = $db->prepare("INSERT INTO users (id, name, email, password, role, institution, school_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
     
     try {
-        $stmt->execute([$id, $name, $email, $password, $role, $institution]);
+        $stmt->execute([$id, $name, $email, $password, $role, $institution, $schoolId]);
         
         $user = [
             'id' => $id,
             'name' => $name,
             'email' => $email,
             'role' => $role,
-            'institution' => $institution
+            'institution' => $institution,
+            'school_id' => $schoolId
         ];
         
         sendResponse(['success' => true, 'user' => $user], 201);
