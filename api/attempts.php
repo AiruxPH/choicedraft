@@ -59,9 +59,11 @@ function getAttemptsByTest($testId) {
     $db = getDB();
     
     $stmt = $db->prepare("
-        SELECT ta.*, u.name as user_name, u.email as user_email
+        SELECT ta.*,
+               CASE WHEN ta.is_anonymous = 1 THEN 'Anonymous' ELSE COALESCE(ta.display_name, u.name) END as user_name,
+               CASE WHEN ta.is_anonymous = 1 THEN NULL ELSE u.email END as user_email
         FROM test_attempts ta
-        JOIN users u ON ta.user_id = u.id
+        LEFT JOIN users u ON ta.user_id = u.id
         WHERE ta.test_id = ?
         ORDER BY ta.completed_at DESC
     ");
@@ -80,6 +82,7 @@ function submitAttempt($data) {
     $testId = $data['test_id'] ?? '';
     $userId = $data['user_id'] ?? '';
     $answers = $data['answers'] ?? [];
+    $isAnonymous = isset($data['is_anonymous']) ? (int)$data['is_anonymous'] : 0;
     
     if (empty($testId) || empty($userId)) {
         sendResponse(['error' => 'Test ID and User ID required'], 400);
@@ -122,14 +125,25 @@ function submitAttempt($data) {
     
     $percentage = $totalPoints > 0 ? round(($score / $totalPoints) * 100, 2) : 0;
     
+    // Get display name (anonymous or real)
+    $displayName = null;
+    if ($isAnonymous) {
+        $displayName = 'Anonymous';
+    } else {
+        $nameStmt = $db->prepare("SELECT name FROM users WHERE id = ?");
+        $nameStmt->execute([$userId]);
+        $nameRow = $nameStmt->fetch();
+        $displayName = $nameRow ? $nameRow['name'] : 'Unknown';
+    }
+    
     // Save attempt
     $stmt = $db->prepare("
-        INSERT INTO test_attempts (test_id, user_id, percentage, score, total_points, answers, completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, NOW())
+        INSERT INTO test_attempts (test_id, user_id, percentage, score, total_points, answers, is_anonymous, display_name, completed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
     ");
     
     try {
-        $stmt->execute([$testId, $userId, $percentage, $score, $totalPoints, json_encode($answers)]);
+        $stmt->execute([$testId, $userId, $percentage, $score, $totalPoints, json_encode($answers), $isAnonymous, $displayName]);
         $attemptId = $db->lastInsertId();
         
         sendResponse([
@@ -142,6 +156,8 @@ function submitAttempt($data) {
                 'score' => $score,
                 'total_points' => $totalPoints,
                 'answers' => $answers,
+                'is_anonymous' => $isAnonymous,
+                'display_name' => $displayName,
                 'completed_at' => date('Y-m-d H:i:s')
             ]
         ], 201);
