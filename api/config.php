@@ -19,7 +19,7 @@ define('DB_HOST', 'srv1999.hstgr.io');
 //define('DB_HOST', 'localhost');
 define('DB_NAME', 'ul30348899_choicedraft');
 define('DB_USER', 'ul30348899_csit6');
-define('DB_PASS', 'CSIT6_pass');
+define('DB_PASS', 'ChoiceDraft99@');
 define('DB_CHARSET', 'utf8mb4');
 
 /**
