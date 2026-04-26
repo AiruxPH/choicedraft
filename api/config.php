@@ -15,7 +15,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 // Database configuration
-define('DB_HOST', 'svr1999.hstgr.io');
+//define('DB_HOST', 'svr1999.hstgr.io');
+define('DB_HOST', 'localhost');
 define('DB_NAME', 'ul30348899_choicedraft');
 define('DB_USER', 'ul30348899_csit6');
 define('DB_PASS', 'CSIT6_pass');
