@@ -15,6 +15,8 @@ switch ($method) {
             getUser($_GET['id']);
         } elseif (isset($_GET['email'])) {
             getUserByEmail($_GET['email']);
+        } elseif (isset($_GET['school_id'])) {
+            getUserBySchoolId($_GET['school_id']);
         } else {
             listUsers();
         }
@@ -44,7 +46,7 @@ function getUser($id) {
     $db = getDB();
     
     $stmt = $db->prepare("
-        SELECT id, name, email, role, institution, created_at 
+        SELECT id, name, email, role, institution, school_id, created_at 
         FROM users WHERE id = ?
     ");
     $stmt->execute([$id]);
@@ -61,7 +63,7 @@ function getUserByEmail($email) {
     $db = getDB();
     
     $stmt = $db->prepare("
-        SELECT id, name, email, role, institution, created_at 
+        SELECT id, name, email, role, institution, school_id, created_at 
         FROM users WHERE email = ?
     ");
     $stmt->execute([$email]);
@@ -74,20 +76,37 @@ function getUserByEmail($email) {
     sendResponse(['user' => $user]);
 }
 
+function getUserBySchoolId($schoolId) {
+    $db = getDB();
+    
+    $stmt = $db->prepare("
+        SELECT id, name, email, role, institution, school_id, created_at 
+        FROM users WHERE school_id = ? AND role = 'Student'
+    ");
+    $stmt->execute([$schoolId]);
+    $user = $stmt->fetch();
+    
+    if (!$user) {
+        sendResponse(['error' => 'No student found with that School ID'], 404);
+    }
+    
+    sendResponse(['user' => $user]);
+}
+
 function listUsers() {
     $db = getDB();
     $role = $_GET['role'] ?? null;
     
     if ($role) {
         $stmt = $db->prepare("
-            SELECT id, name, email, role, institution, created_at 
+            SELECT id, name, email, role, institution, school_id, created_at 
             FROM users WHERE role = ?
             ORDER BY created_at DESC
         ");
         $stmt->execute([$role]);
     } else {
         $stmt = $db->query("
-            SELECT id, name, email, role, institution, created_at 
+            SELECT id, name, email, role, institution, school_id, created_at 
             FROM users ORDER BY created_at DESC
         ");
     }
@@ -110,7 +129,7 @@ function updateUser($id, $data) {
     $fields = [];
     $values = [];
     
-    $allowedFields = ['name', 'email', 'role', 'institution'];
+    $allowedFields = ['name', 'email', 'role', 'institution', 'school_id'];
     
     foreach ($allowedFields as $field) {
         if (isset($data[$field])) {
