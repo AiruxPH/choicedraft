@@ -151,6 +151,7 @@ function createTest($data) {
     $shuffleChoices = $data['shuffle_choices'] ?? 1;
     $startDate = $data['start_date'] ?? null;
     $endDate = $data['end_date'] ?? null;
+    $subjectId = $data['subject_id'] ?? null;
     
     if (empty($ownerId)) {
         sendResponse(['error' => 'Owner ID required'], 400);
@@ -161,13 +162,13 @@ function createTest($data) {
     
     $stmt = $db->prepare("
         INSERT INTO tests (id, owner_id, title, description, status, time_limit, 
-                          shuffle_questions, shuffle_choices, start_date, end_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          shuffle_questions, shuffle_choices, start_date, end_date, subject_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     
     try {
         $stmt->execute([$id, $ownerId, $title, $description, $status, $timeLimit, 
-                       $shuffleQuestions, $shuffleChoices, $startDate, $endDate]);
+                       $shuffleQuestions, $shuffleChoices, $startDate, $endDate, $subjectId]);
         
         sendResponse([
             'success' => true,
@@ -205,7 +206,7 @@ function updateTest($id, $data) {
     $values = [];
     
     $allowedFields = ['title', 'description', 'status', 'time_limit', 
-                      'shuffle_questions', 'shuffle_choices', 'start_date', 'end_date'];
+                      'shuffle_questions', 'shuffle_choices', 'start_date', 'end_date', 'subject_id'];
     
     foreach ($allowedFields as $field) {
         if (isset($data[$field])) {
