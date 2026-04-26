@@ -259,6 +259,19 @@ function updateTest($id, $data) {
 function deleteTest($id) {
     $db = getDB();
     
+    // Guard: Cannot delete a Published (ongoing) test
+    $stmt = $db->prepare("SELECT status FROM tests WHERE id = ?");
+    $stmt->execute([$id]);
+    $test = $stmt->fetch();
+    
+    if (!$test) {
+        sendResponse(['error' => 'Test not found'], 404);
+    }
+    
+    if ($test['status'] === 'Published') {
+        sendResponse(['error' => 'Cannot delete an ongoing (Published) test. Mark it as Finished first.'], 403);
+    }
+    
     try {
         // Delete related records first
         $db->prepare("DELETE FROM choices WHERE test_id = ?")->execute([$id]);
