@@ -125,6 +125,19 @@ function listTests() {
             ORDER BY t.created_at DESC
         ");
         $stmt->execute([$userId, $userId]);
+    } elseif (isset($_GET['admin']) && $_GET['admin'] == '1') {
+        // Admin: Get ALL tests
+        $stmt = $db->prepare("
+            SELECT t.*, 
+                   COUNT(DISTINCT q.id) as question_count,
+                   u.name as owner_name
+            FROM tests t
+            LEFT JOIN users u ON t.owner_id = u.id
+            LEFT JOIN questions q ON t.id = q.test_id
+            GROUP BY t.id
+            ORDER BY t.created_at DESC
+        ");
+        $stmt->execute();
     } else {
         // Get all published tests
         $stmt = $db->prepare("
