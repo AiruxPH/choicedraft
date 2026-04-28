@@ -361,8 +361,12 @@ function getClassAnalytics($id)
             return $a['test_id'] === $t['id']; });
         $count = count($attempts);
         $sum = 0;
-        foreach ($attempts as $a)
+        $high = 0;
+        foreach ($attempts as $a) {
             $sum += $a['percentage'];
+            if ($a['percentage'] > $high)
+                $high = $a['percentage'];
+        }
         $avg = $count > 0 ? round($sum / $count, 1) : 0;
 
         $testStats[] = [
@@ -370,7 +374,8 @@ function getClassAnalytics($id)
             'title' => $t['title'],
             'status' => $t['status'],
             'attempt_count' => $count,
-            'average_percentage' => $avg
+            'avg_pct' => $avg,
+            'high_pct' => $high
         ];
     }
 
@@ -390,20 +395,18 @@ function getClassAnalytics($id)
             'name' => $m['name'],
             'school_id' => $m['school_id'],
             'attempt_count' => $count,
-            'average_percentage' => $avg
+            'avg_pct' => $avg
         ];
     }
 
     sendResponse([
         'subject' => $subject,
-        'stats' => [
-            'total_students' => count($members),
-            'total_tests' => count($tests),
-            'total_attempts' => $totalAttempts,
-            'overall_average' => $avgScore
-        ],
-        'test_stats' => $testStats,
-        'student_stats' => $studentStats,
+        'class_average' => $avgScore,
+        'total_attempts' => $totalAttempts,
+        'total_students' => count($members),
+        'total_tests' => count($tests),
+        'tests' => $testStats,
+        'students' => $studentStats,
         'recent_attempts' => array_slice($allAttempts, 0, 15)
     ]);
 }
