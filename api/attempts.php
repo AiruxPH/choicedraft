@@ -55,7 +55,7 @@ function getUserAllAttempts($userId)
             t.title AS test_title,
             t.subject_id
         FROM test_attempts ta
-        JOIN tests t ON ta.test_id = t.id
+        LEFT JOIN tests t ON ta.test_id = t.id
         WHERE ta.user_id = ?
         ORDER BY ta.completed_at DESC
     ");

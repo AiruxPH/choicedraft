@@ -307,3 +307,104 @@ function deleteSubject($id)
         sendResponse(['error' => 'Failed to delete subject: ' . $e->getMessage()], 500);
     }
 }
+
+function getClassAnalytics($id)
+{
+    $db = getDB();
+
+    // 1. Get Subject basic info
+    $stmt = $db->prepare("SELECT * FROM subjects WHERE id = ?");
+    $stmt->execute([$id]);
+    $subject = $stmt->fetch();
+
+    if (!$subject) {
+        sendResponse(['error' => 'Subject not found'], 404);
+    }
+
+    // 2. Get students in this subject
+    $members = getEnrichedMembers($db, $id);
+
+    // 3. Get all tests belonging to this subject
+    $stmt = $db->prepare("SELECT id, title, status, created_at FROM tests WHERE subject_id = ?");
+    $stmt->execute([$id]);
+    $tests = $stmt->fetchAll();
+
+    $testIds = array_column($tests, 'id');
+    $allAttempts = [];
+
+    if (!empty($testIds)) {
+        // 4. Get all attempts for all tests in this subject
+        $placeholders = implode(',', array_fill(0, count($testIds), '?'));
+        $stmt = $db->prepare("
+            SELECT ta.*, u.name as user_name 
+            FROM test_attempts ta
+            LEFT JOIN users u ON ta.user_id = u.id
+            WHERE ta.test_id IN ($placeholders)
+            ORDER BY ta.completed_at DESC
+        ");
+        $stmt->execute($testIds);
+        $allAttempts = $stmt->fetchAll();
+    }
+
+    // 5. Aggregate overall stats
+    $totalAttempts = count($allAttempts);
+    $totalPercentage = 0;
+    foreach ($allAttempts as $att) {
+        $totalPercentage += $att['percentage'];
+    }
+    $avgScore = $totalAttempts > 0 ? round($totalPercentage / $totalAttempts, 1) : 0;
+
+    // 6. Test-specific analytics
+    $testStats = [];
+    foreach ($tests as $t) {
+        $attempts = array_filter($allAttempts, function ($a) use ($t) {
+            return $a['test_id'] === $t['id']; });
+        $count = count($attempts);
+        $sum = 0;
+        foreach ($attempts as $a)
+            $sum += $a['percentage'];
+        $avg = $count > 0 ? round($sum / $count, 1) : 0;
+
+        $testStats[] = [
+            'id' => $t['id'],
+            'title' => $t['title'],
+            'status' => $t['status'],
+            'attempt_count' => $count,
+            'average_percentage' => $avg
+        ];
+    }
+
+    // 7. Student-specific analytics
+    $studentStats = [];
+    foreach ($members as $m) {
+        $attempts = array_filter($allAttempts, function ($a) use ($m) {
+            return $a['user_id'] === $m['id']; });
+        $count = count($attempts);
+        $sum = 0;
+        foreach ($attempts as $a)
+            $sum += $a['percentage'];
+        $avg = $count > 0 ? round($sum / $count, 1) : 0;
+
+        $studentStats[] = [
+            'id' => $m['id'],
+            'name' => $m['name'],
+            'school_id' => $m['school_id'],
+            'attempt_count' => $count,
+            'average_percentage' => $avg
+        ];
+    }
+
+    sendResponse([
+        'subject' => $subject,
+        'stats' => [
+            'total_students' => count($members),
+            'total_tests' => count($tests),
+            'total_attempts' => $totalAttempts,
+            'overall_average' => $avgScore
+        ],
+        'test_stats' => $testStats,
+        'student_stats' => $studentStats,
+        'recent_attempts' => array_slice($allAttempts, 0, 15)
+    ]);
+}
+
