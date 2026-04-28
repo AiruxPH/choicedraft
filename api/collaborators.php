@@ -17,11 +17,11 @@ switch ($method) {
             sendResponse(['error' => 'Test ID required'], 400);
         }
         break;
-        
+
     case 'POST':
         addCollaborator($input);
         break;
-        
+
     case 'DELETE':
         if (isset($_GET['test_id']) && isset($_GET['user_id'])) {
             removeCollaborator($_GET['test_id'], $_GET['user_id']);
@@ -29,14 +29,19 @@ switch ($method) {
             sendResponse(['error' => 'Test ID and User ID required'], 400);
         }
         break;
-        
+
+    case 'PUT':
+        updateCollaboratorRole($input);
+        break;
+
     default:
         sendResponse(['error' => 'Method not allowed'], 405);
 }
 
-function getCollaborators($testId) {
+function getCollaborators($testId)
+{
     $db = getDB();
-    
+
     $stmt = $db->prepare("
         SELECT test_id, user_id, name, email, role
         FROM test_collaborators
@@ -44,60 +49,61 @@ function getCollaborators($testId) {
     ");
     $stmt->execute([$testId]);
     $collaborators = $stmt->fetchAll();
-    
+
     sendResponse(['collaborators' => $collaborators]);
 }
 
-function addCollaborator($data) {
+function addCollaborator($data)
+{
     $testId = $data['test_id'] ?? '';
     $email = $data['email'] ?? '';
     $collaboratorRole = $data['role'] ?? 'Viewer';
     $currentUserId = $data['current_user_id'] ?? '';
-    
+
     if (empty($testId) || empty($email)) {
         sendResponse(['success' => false, 'error' => 'Test ID and email required'], 400);
     }
-    
+
     $db = getDB();
-    
+
     // Get test owner
     $stmt = $db->prepare("SELECT owner_id FROM tests WHERE id = ?");
     $stmt->execute([$testId]);
     $test = $stmt->fetch();
-    
+
     if (!$test) {
         sendResponse(['success' => false, 'error' => 'Test not found'], 404);
     }
-    
+
     // Find user by email
     $stmt = $db->prepare("SELECT id, name, email FROM users WHERE email = ?");
     $stmt->execute([$email]);
     $user = $stmt->fetch();
-    
+
     if (!$user) {
         sendResponse(['success' => false, 'error' => 'User not found with this email'], 404);
     }
-    
+
     // Check if trying to add self
     if ($currentUserId && $user['id'] === $currentUserId) {
         sendResponse(['success' => false, 'error' => 'You cannot add yourself'], 400);
     }
-    
+
     // Check if trying to add owner
     if ($user['id'] === $test['owner_id']) {
         sendResponse(['success' => false, 'error' => 'Owner cannot be a collaborator'], 400);
     }
-    
+
     // Check if already a collaborator
     $stmt = $db->prepare("SELECT user_id FROM test_collaborators WHERE test_id = ? AND user_id = ?");
     $stmt->execute([$testId, $user['id']]);
     if ($stmt->fetch()) {
         sendResponse(['success' => false, 'error' => 'User is already a collaborator'], 409);
     }
-    
+
     // Add collaborator with denormalized data
     $stmt = $db->prepare("INSERT INTO test_collaborators (test_id, user_id, name, email, role) VALUES (?, ?, ?, ?, ?)");
-    
+
     try {
         $stmt->execute([$testId, $user['id'], $user['name'], $user['email'], $collaboratorRole]);
         sendResponse([
@@ -115,15 +121,60 @@ function addCollaborator($data) {
     }
 }
 
-function removeCollaborator($testId, $userId) {
+function removeCollaborator($testId, $userId)
+{
     $db = getDB();
-    
+
     $stmt = $db->prepare("DELETE FROM test_collaborators WHERE test_id = ? AND user_id = ?");
-    
+
     try {
         $stmt->execute([$testId, $userId]);
         sendResponse(['success' => true]);
     } catch (PDOException $e) {
         sendResponse(['error' => 'Failed to remove collaborator: ' . $e->getMessage()], 500);
+    }
+}
+
+function updateCollaboratorRole($data)
+{
+    $testId = $data['test_id'] ?? '';
+    $userId = $data['user_id'] ?? '';
+    $role = $data['role'] ?? '';
+    $currentUserId = $data['current_user_id'] ?? '';
+
+    if (empty($testId) || empty($userId) || empty($role)) {
+        sendResponse(['success' => false, 'error' => 'Test ID, User ID, and new role are required'], 400);
+    }
+
+    $db = getDB();
+
+    // Security check: Only the owner should be able to update roles. 
+    // We assume the frontend passes current_user_id to check this.
+    $stmt = $db->prepare("SELECT owner_id FROM tests WHERE id = ?");
+    $stmt->execute([$testId]);
+    $test = $stmt->fetch();
+
+    if (!$test) {
+        sendResponse(['success' => false, 'error' => 'Test not found'], 404);
+    }
+
+    if ($currentUserId && $test['owner_id'] !== $currentUserId) {
+        sendResponse(['success' => false, 'error' => 'Only the test owner can change roles'], 403);
+    }
+
+    // Ensure the user is actually a collaborator
+    $stmt = $db->prepare("SELECT role FROM test_collaborators WHERE test_id = ? AND user_id = ?");
+    $stmt->execute([$testId, $userId]);
+    if (!$stmt->fetch()) {
+        sendResponse(['success' => false, 'error' => 'User is not a collaborator on this test'], 404);
+    }
+
+    $stmt = $db->prepare("UPDATE test_collaborators SET role = ? WHERE test_id = ? AND user_id = ?");
+
+    try {
+        $stmt->execute([$role, $testId, $userId]);
+        sendResponse(['success' => true]);
+    } catch (PDOException $e) {
+        sendResponse(['success' => false, 'error' => 'Failed to update role: ' . $e->getMessage()], 500);
     }
 }
