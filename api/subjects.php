@@ -11,13 +11,15 @@ $input = getJsonInput();
 
 switch ($method) {
     case 'GET':
-        if (isset($_GET['id'])) {
+        if (isset($_GET['id']) && isset($_GET['analytics'])) {
+            getClassAnalytics($_GET['id']);
+        } elseif (isset($_GET['id'])) {
             getSubject($_GET['id']);
         } else {
             listSubjects();
         }
         break;
-        
+
     case 'POST':
         if (isset($input['action']) && $input['action'] === 'join') {
             joinSubject($input);
@@ -27,7 +29,7 @@ switch ($method) {
             createSubject($input);
         }
         break;
-        
+
     case 'PUT':
         if (isset($_GET['id'])) {
             updateSubject($_GET['id'], $input);
@@ -35,7 +37,7 @@ switch ($method) {
             sendResponse(['error' => 'Subject ID required'], 400);
         }
         break;
-        
+
     case 'DELETE':
         if (isset($_GET['id']) && isset($_GET['user_id'])) {
             // Remove a specific student from enrollment
@@ -46,12 +48,13 @@ switch ($method) {
             sendResponse(['error' => 'Subject ID required'], 400);
         }
         break;
-        
+
     default:
         sendResponse(['error' => 'Method not allowed'], 405);
 }
 
-function getEnrichedMembers($db, $subjectId) {
+function getEnrichedMembers($db, $subjectId)
+{
     $stmt = $db->prepare("
         SELECT u.id, u.name, u.email, u.school_id, se.enrolled_at
         FROM subject_enrollments se
@@ -63,34 +66,36 @@ function getEnrichedMembers($db, $subjectId) {
     return $stmt->fetchAll();
 }
 
-function getSubject($id) {
+function getSubject($id)
+{
     $db = getDB();
-    
+
     $stmt = $db->prepare("SELECT * FROM subjects WHERE id = ?");
     $stmt->execute([$id]);
     $subject = $stmt->fetch();
-    
+
     if (!$subject) {
         sendResponse(['error' => 'Subject not found'], 404);
     }
-    
+
     $subject['members'] = getEnrichedMembers($db, $id);
     $subject['enrolled_count'] = count($subject['members']);
     // Keep legacy field for compatibility
     $subject['enrolledStudents'] = array_column($subject['members'], 'id');
-    
+
     sendResponse(['subject' => $subject]);
 }
 
-function listSubjects() {
+function listSubjects()
+{
     $db = getDB();
     $userId = $_GET['user_id'] ?? null;
     $role = $_GET['role'] ?? null;
-    
+
     if (!$userId) {
         sendResponse(['error' => 'user_id parameter is required'], 400);
     }
-    
+
     if ($role === 'Teacher' || $role === 'Admin') {
         $stmt = $db->prepare("SELECT * FROM subjects WHERE teacher_id = ? ORDER BY created_at DESC");
         $stmt->execute([$userId]);
@@ -103,33 +108,34 @@ function listSubjects() {
         ");
         $stmt->execute([$userId]);
     }
-    
+
     $subjects = $stmt->fetchAll();
-    
+
     foreach ($subjects as &$subject) {
         $subject['members'] = getEnrichedMembers($db, $subject['id']);
         $subject['enrolled_count'] = count($subject['members']);
         $subject['enrolledStudents'] = array_column($subject['members'], 'id');
     }
-    
+
     sendResponse(['subjects' => $subjects]);
 }
 
-function createSubject($data) {
+function createSubject($data)
+{
     $teacherId = $data['teacher_id'] ?? '';
     $name = $data['name'] ?? '';
     $description = $data['description'] ?? null;
     $joinCode = $data['join_code'] ?? null;
-    
+
     if (empty($teacherId) || empty($name)) {
         sendResponse(['error' => 'Teacher ID and Name are required'], 400);
     }
-    
+
     $db = getDB();
     $id = generateId('subj');
-    
+
     $stmt = $db->prepare("INSERT INTO subjects (id, name, description, teacher_id, join_code) VALUES (?, ?, ?, ?, ?)");
-    
+
     try {
         $stmt->execute([$id, $name, $description, $teacherId, $joinCode]);
         sendResponse([
@@ -151,30 +157,31 @@ function createSubject($data) {
     }
 }
 
-function joinSubject($data) {
+function joinSubject($data)
+{
     $userId = $data['user_id'] ?? '';
     $joinCode = $data['join_code'] ?? '';
-    
+
     if (empty($userId) || empty($joinCode)) {
         sendResponse(['error' => 'User ID and Join Code are required'], 400);
     }
-    
+
     $db = getDB();
-    
+
     $stmt = $db->prepare("SELECT * FROM subjects WHERE join_code = ?");
     $stmt->execute([$joinCode]);
     $subject = $stmt->fetch();
-    
+
     if (!$subject) {
         sendResponse(['success' => false, 'error' => 'Invalid Join Code'], 404);
     }
-    
+
     $stmt = $db->prepare("SELECT * FROM subject_enrollments WHERE subject_id = ? AND user_id = ?");
     $stmt->execute([$subject['id'], $userId]);
     if ($stmt->fetch()) {
         sendResponse(['success' => false, 'error' => 'Already enrolled in this subject'], 400);
     }
-    
+
     $stmt = $db->prepare("INSERT INTO subject_enrollments (subject_id, user_id) VALUES (?, ?)");
     try {
         $stmt->execute([$subject['id'], $userId]);
@@ -187,32 +194,33 @@ function joinSubject($data) {
     }
 }
 
-function addBySchoolId($data) {
+function addBySchoolId($data)
+{
     $subjectId = $data['subject_id'] ?? '';
     $schoolId = $data['school_id'] ?? '';
-    
+
     if (empty($subjectId) || empty($schoolId)) {
         sendResponse(['error' => 'Subject ID and School ID are required'], 400);
     }
-    
+
     $db = getDB();
-    
+
     // Look up student by school_id
     $stmt = $db->prepare("SELECT id, name, email FROM users WHERE school_id = ? AND role = 'Student'");
     $stmt->execute([$schoolId]);
     $student = $stmt->fetch();
-    
+
     if (!$student) {
         sendResponse(['success' => false, 'error' => 'No student found with School ID: ' . $schoolId], 404);
     }
-    
+
     // Check already enrolled
     $stmt = $db->prepare("SELECT * FROM subject_enrollments WHERE subject_id = ? AND user_id = ?");
     $stmt->execute([$subjectId, $student['id']]);
     if ($stmt->fetch()) {
         sendResponse(['success' => false, 'error' => $student['name'] . ' is already enrolled in this class'], 400);
     }
-    
+
     $stmt = $db->prepare("INSERT INTO subject_enrollments (subject_id, user_id) VALUES (?, ?)");
     try {
         $stmt->execute([$subjectId, $student['id']]);
@@ -222,9 +230,10 @@ function addBySchoolId($data) {
     }
 }
 
-function removeEnrollment($subjectId, $userId) {
+function removeEnrollment($subjectId, $userId)
+{
     $db = getDB();
-    
+
     $stmt = $db->prepare("DELETE FROM subject_enrollments WHERE subject_id = ? AND user_id = ?");
     try {
         $stmt->execute([$subjectId, $userId]);
@@ -234,34 +243,35 @@ function removeEnrollment($subjectId, $userId) {
     }
 }
 
-function updateSubject($id, $data) {
+function updateSubject($id, $data)
+{
     $db = getDB();
-    
+
     $stmt = $db->prepare("SELECT id FROM subjects WHERE id = ?");
     $stmt->execute([$id]);
     if (!$stmt->fetch()) {
         sendResponse(['error' => 'Subject not found'], 404);
     }
-    
+
     $fields = [];
     $values = [];
-    
+
     $allowedFields = ['name', 'description', 'join_code'];
-    
+
     foreach ($allowedFields as $field) {
         if (array_key_exists($field, $data)) {
             $fields[] = "$field = ?";
             $values[] = $data[$field];
         }
     }
-    
+
     if (empty($fields)) {
         sendResponse(['error' => 'No fields to update'], 400);
     }
-    
+
     $values[] = $id;
     $sql = "UPDATE subjects SET " . implode(', ', $fields) . " WHERE id = ?";
-    
+
     try {
         $stmt = $db->prepare($sql);
         $stmt->execute($values);
@@ -271,23 +281,24 @@ function updateSubject($id, $data) {
     }
 }
 
-function deleteSubject($id) {
+function deleteSubject($id)
+{
     $db = getDB();
-    
+
     // Guard 1: No enrolled students
     $stmt = $db->prepare("SELECT COUNT(*) FROM subject_enrollments WHERE subject_id = ?");
     $stmt->execute([$id]);
     if ($stmt->fetchColumn() > 0) {
         sendResponse(['error' => 'Cannot delete: class still has enrolled students. Remove all students first.'], 409);
     }
-    
+
     // Guard 2: No active (Published) tests
     $stmt = $db->prepare("SELECT COUNT(*) FROM tests WHERE subject_id = ? AND status = 'Published'");
     $stmt->execute([$id]);
     if ($stmt->fetchColumn() > 0) {
         sendResponse(['error' => 'Cannot delete: class has ongoing (Published) tests. Finish or archive them first.'], 409);
     }
-    
+
     try {
         $stmt = $db->prepare("DELETE FROM subjects WHERE id = ?");
         $stmt->execute([$id]);

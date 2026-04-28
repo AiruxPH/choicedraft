@@ -43,7 +43,17 @@ function getUserAllAttempts($userId)
     $db = getDB();
 
     $stmt = $db->prepare("
-        SELECT ta.*, t.title as test_title 
+        SELECT 
+            ta.id,
+            ta.test_id,
+            ta.percentage,
+            ta.score,
+            ta.total_points,
+            ta.feedback,
+            ta.feedback_at,
+            ta.completed_at,
+            t.title AS test_title,
+            t.subject_id
         FROM test_attempts ta
         JOIN tests t ON ta.test_id = t.id
         WHERE ta.user_id = ?
